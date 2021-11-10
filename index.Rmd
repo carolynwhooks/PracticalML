@@ -1,0 +1,199 @@
+---
+title: "Practical Machine Learning - Weight Lifting Final Project"
+author: "C Whitehead"
+date: "10/22/2021"
+output: html_document
+---
+
+```{r setup, cache = F, echo = F, message = F, warning = F, tidy = F, results='hide'}
+# make this an external chunk that can be included in any file
+options(width = 100)
+knitr::opts_chunk$set(message = F, error = F, warning = F, comment = NA, fig.align = 'center', dpi = 100, tidy = F, cache.path = '.cache/', fig.path = 'fig/')
+```
+
+## Introduction  
+  
+Using devices such as Jawbone Up, Nike FuelBand, and Fitbit it is now possible to collect a large amount of data about personal activity relatively inexpensively. These type of devices are part of the quantified self movement – a group of enthusiasts who take measurements about themselves regularly to improve their health, to find patterns in their behavior, or because they are tech geeks. One thing that people regularly do is quantify how much of a particular activity they do, but they rarely quantify how well they do it. In this project, your goal will be to use data from accelerometers on the belt, forearm, arm, and dumbell of 6 participants. They were asked to perform barbell lifts correctly and incorrectly in 5 different ways. More information is available from the website here: http://groupware.les.inf.puc-rio.br/har (see the section on the Weight Lifting Exercise Dataset).
+
+Our outcome variable is classe, a factor variable. For this data set, “participants were asked to perform one set of 10 repetitions of the Unilateral Dumbbell Biceps Curl in 5 different fashions:   
+(Class A) - exactly according to the specification  
+(Class B) - throwing the elbows to the front  
+(Class C) - lifting the dumbbell only halfway  
+(Class D) - lowering the dumbbell only halfway  
+(Class E) - throwing the hips to the front  
+  
+Data 
+The training data for this project are available here: 
+
+https://d396qusza40orc.cloudfront.net/predmachlearn/pml-training.csv
+
+The test data are available here:
+
+https://d396qusza40orc.cloudfront.net/predmachlearn/pml-testing.csv
+
+
+## Load the Data  
+
+```{r loadData,echo=TRUE}
+train <- read.csv("pml-training.csv",na.strings = c("NA",""),header=TRUE)
+test <- read.csv("pml-testing.csv",na.strings = c("NA",""),header=TRUE)
+dim(train) #Show train data dimensions
+dim(test) #Show test data dimensions
+```
+## Data Cleaning and Exploration  
+  
+  There are a lot of missing and/or unused data columns so I removed them from both  
+  the training and test datasets. Several more columns are dropped because they are  
+  not needed as predictors. This decreases the number of column variables from  
+  160 to 53. The number of observations stays the same for both training and test.  
+  
+```{r cleaningData,echo=FALSE}
+#Clean Training Data
+naCols1<-sapply(train, function(x) any(is.na(x))) #remove NAs
+naCols2<-sapply(train, function(x) "" %in% levels(x)) #remove empty quotes
+naAllCols <-naCols1 | naCols2  # create final list of non missing columns
+cleanTrain <- train[,-which(naAllCols)] #only use non missing columns
+cleanTrain <- cleanTrain[,-1:-7] #Not useful as predictors
+
+#Clean Test Data using same columns found from training
+cleanTest <- test[,-which(naAllCols)]
+cleanTest <- cleanTest[,-1:-7]
+#str(cleanTrain) #Display the set of final predictors
+#summary(cleanTrain)
+#head(cleanTrain,1)
+```
+```{r cleanResults,echo=TRUE}
+dim(cleanTrain) #Show new dimensions of the cleaned train dataset
+dim(cleanTest)  #Show new dimensions of the cleaned test dataset
+str(cleanTest) #Display the list of predictors
+```
+  
+## Fitting Models - Executive Summary
+  
+  I decided to fit several classifier models to find the most accurate.  I also  
+  split the cleaned training data into a training set and a test validation set.  
+  I will use the original cleaned test dataset to test the final selected model.  
+  
+  1. Rpart Model has an accuracy of about 74% or 0.7406967.  
+     With 95% CI : (0.7293, 0.7519)
+  2. LDA Model has an accuracy of about 71% or 0.7099405.  
+     With 95% CI : (0.6982, 0.7215)
+  3. SVM Model has an accuracy of about 94% or 0.9434155.  
+     With 95% CI : (0.9372, 0.9492)
+  4. Random Forest Model has an accuracy of about 99% or 0.9937128.   
+     With 95% CI : (0.9913, 0.9956)
+  5. Combined Boosting Model using "gbm" has an accuracy of 99% or 0.9945624.  
+     With 95% CI : (0.9923, 0.9963)
+    
+  For the Combined Boosting Model, I created an ensemble combining three  
+  classifier models, the Rpart,the SVM and Random Forest. For the resampling  
+  method I used "cv" with number of folds set at 10.  
+  I tried LOOCV (Leave One Out Cross Validation), however it ran too long.  
+  
+  The Combined Model's accuracy was greater than that of the Rpart and SVM models  
+  and greater than the accuracy of the Random Forest Classifier. The summary reported   from the Combined Model shows that the Random Forest Classifier had the  
+  largest Relative Influence on the results for outcomes B,C,D and E.  
+  
+  Overall, the Random Forest model and Combined model stood out as the best  
+  classifiers for this data.  
+
+    
+```{r fittingModels,echo=TRUE}
+suppressPackageStartupMessages(library(caret))
+suppressPackageStartupMessages(library(ggplot2))
+# Using the caret package function createDataPartition I split the cleaned data
+# into training data and testing(validation) data 
+set.seed(2021)
+inTrain <-createDataPartition(cleanTrain$classe, p = 0.7, list=FALSE)
+training <- cleanTrain[inTrain,] #training data
+testing <- cleanTrain[-inTrain,] #validation data
+
+training$classe <- as.factor(training$classe) #make train clase variable a factor
+testing$classe <- as.factor(testing$classe)   #make test clase variable a factor
+```
+
+
+Create a tree model, Plot the Decision Tree and Show Accuracy  
+```{r fitModel1,echo=TRUE}
+suppressPackageStartupMessages(library(rpart))
+suppressPackageStartupMessages(library(rpart.plot))
+classFit <- rpart(classe ~ ., data=training,method="class")
+classPred <- predict(classFit, testing, type = "class") #predict on validation data
+confusionMatrix(classPred,testing$classe)$overall[1]
+rpart.plot(classFit, main="Tree (rpart) Model: Classification Tree", extra=102, under=TRUE, faclen=1)
+```
+
+Create a LDA model, Plot the Outcomes and Show Accuracy
+```{r fitModel1A,echo=TRUE}
+library(caret)
+ldaFit <- train(classe ~ ., data=training,method="lda",
+                  trControl=trainControl(method="cv",number=10,verboseIter = FALSE))
+ldaPred <- predict(ldaFit, testing) #predict using validation data
+#plot(ldaPred,main="LDA Model Outcomes",col="lightgray")
+confusionMatrix(ldaPred,testing$classe)$overall[1]
+
+
+```
+
+Create a SVM model, Plot the Outcomes and Show Accuracy  
+```{r fitModel2,echo=TRUE}
+suppressPackageStartupMessages(library(e1071))
+svmFit <- svm(classe ~ ., data=training)
+svmPred <- predict(svmFit,testing) #predict using validation data
+#plot(svmPred,main="SVM Model Outcomes",col="blue")
+confusionMatrix(svmPred, testing$classe)$overall[1]
+
+```
+
+Create a Random Forest model, Plot Outcomes and Show Accuracy
+```{r fitModel3,echo=TRUE}
+suppressPackageStartupMessages(library(caret))
+rfFit <- train(classe ~.,method="rf",data=training,verbose=FALSE,
+                trControl=trainControl(method="cv",number=10,verboseIter = FALSE))
+rfPred <- predict(rfFit,testing) #predict using validation data
+#plot(rfPred,main="Random Forest Model Outcomes",col="green")
+confusionMatrix(rfPred, testing$classe)$overall[1]
+```
+Create a Combined Boosting Classifier Model, Plot Outcomes and Show Accuracy  
+```{r fitCombined,echo=TRUE}
+suppressPackageStartupMessages(library(caret))
+#Fit a model that combines predictors
+predDF <- data.frame(classPred,svmPred,rfPred, classe=testing$classe)
+combModFit <- train(classe ~.,method="gbm",data=predDF,verbose=FALSE,
+                trControl=trainControl(method="cv",number=10,verboseIter = FALSE))
+combPred <- predict(combModFit,predDF)
+summary(combModFit)
+#plot(combPred,main="Combined Boosting Model Outcomes",col="red")
+confusionMatrix(combPred, testing$classe)$overall[1]
+```
+Final Prediction on the new Test Dataset, Plot, and Accuracy
+```{r finalPrediction1,echo=TRUE}
+# apply rfFit to real test dataset with 20 observations
+rftestPred <- predict(rfFit, newdata=cleanTest, type="raw")
+#rftestPred
+plot(rftestPred,main="Prediction Outcomes on Test Data using Random Forest")
+```
+
+## Plots and Graphs 
+  
+  Graphs related to the cleaned training data pml-training:  
+
+```{r graphing, echo=FALSE}
+par(mar = c(10,4,4,2))
+plot(training$classe, main="Train Data Classe Levels", xlab="classe", ylab="Frequency",col="purple")
+
+boxplot(training[,1:52], 
+        las = 2,
+        main = "Box Plot of Predictors")
+
+suppressPackageStartupMessages(library(explore))
+suppressPackageStartupMessages(library(dplyr))
+require(stats); require(graphics)
+cleanTrain %>%
+  select(classe,total_accel_arm,total_accel_belt,total_accel_dumbbell,
+         total_accel_forearm) %>%
+  explore_all(target = classe)
+```
+
+
+
